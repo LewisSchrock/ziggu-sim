@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ziggu Puzzle Simulator</title>
+<style>
+  :root {
+    --bg: #faf9f7;
+    --fg: #222;
+    --muted: #888;
+    --panel: #fff;
+    --line: #ddd;
+    --accent: #6a33a1;
+    --exit: #c09;
+    --invalid: #eee;
+    /* Per-maze palette (repeats beyond 6). Blue, green, orange, red, teal, purple. */
+    --c0: #2f6fe0;
+    --c1: #2a9d4f;
+    --c2: #e47a0f;
+    --c3: #c02a2a;
+    --c4: #0c8f8f;
+    --c5: #7d3fd6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.4;
+  }
+  header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px;
+  }
+  h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  h1 small { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .controls label { font-size: 0.9rem; color: var(--muted); }
+  select, button {
+    font: inherit; padding: 6px 10px; border: 1px solid var(--line);
+    background: white; border-radius: 6px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  section { margin-bottom: 24px; }
+
+  #state-display {
+    display: flex; gap: 4px; justify-content: center; font-family: ui-monospace, Menlo, monospace;
+    font-size: 2rem; font-weight: 600;
+  }
+  .digit-box {
+    width: 52px; height: 52px; display: flex; align-items: center; justify-content: center;
+    border-radius: 6px; border: 2px solid transparent; background: var(--panel); color: var(--fg);
+    position: relative;
+  }
+  .digit-box.hint-short { border-color: var(--accent); animation: pulse 1.5s infinite; }
+  .digit-box.hint-long { border-color: var(--exit); animation: pulse 1.5s infinite; }
+  .digit-box.changed { background: #ffe9a8; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+  .digit-label { position: absolute; top: -14px; font-size: 0.6rem; color: var(--muted); }
+
+  #mazes { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; }
+  .maze-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .maze-wrap .title { font-size: 0.85rem; color: var(--muted); font-weight: 500; }
+  .maze-wrap .pos { font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem; }
+
+  .cell { fill: white; stroke: var(--line); stroke-width: 1; }
+  .cell-invalid { fill: var(--invalid); }
+  .corridor { fill: none; stroke-linejoin: round; stroke-linecap: round; stroke-width: 22;
+              opacity: 0.18; }
+  .spot { fill-opacity: 0.7; cursor: pointer; }
+  .spot:hover { fill-opacity: 1; }
+  .spot.disabled { cursor: default; opacity: 0.15; }
+  .current { stroke: #000; stroke-width: 2.5; }
+  .exit-mark { fill: var(--exit); font-size: 14px; text-anchor: middle; }
+
+  #info {
+    display: flex; justify-content: center; gap: 24px; align-items: center;
+    font-size: 0.95rem;
+  }
+  #info .stat { background: var(--panel); padding: 8px 14px; border-radius: 6px;
+                border: 1px solid var(--line); }
+  #info .stat strong { font-weight: 600; }
+
+  #state-graph {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px; min-height: 100px;
+  }
+  #state-graph-svg { display: block; margin: 0 auto; max-width: 100%; }
+  .sg-node { fill: white; stroke: #999; stroke-width: 1.5; cursor: pointer; }
+  .sg-node:hover { stroke: var(--accent); stroke-width: 2.5; }
+  .sg-node.current { fill: var(--accent); stroke: #222; }
+  .sg-node.on-short { stroke: var(--accent); stroke-width: 2; }
+  .sg-edge { stroke: #ccc; stroke-width: 1.5; fill: none; }
+  .sg-edge.on-short { stroke: var(--accent); stroke-width: 2.5; }
+  .sg-edge.on-long { stroke: var(--exit); stroke-width: 2.5; opacity: 0.45; }
+  .sg-label { font-size: 9px; font-family: ui-monospace, Menlo, monospace;
+              pointer-events: none; fill: #555; }
+
+  .note { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top: 6px; }
+  .link-row { display: flex; gap: 10px; justify-content: center; margin-top: 4px; }
+  .link-row a { color: var(--accent); text-decoration: none; }
+  .link-row a:hover { text-decoration: underline; }
+  .toggle {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px;
+    border-radius: 6px; font-size: 0.85rem; user-select: none;
+  }
+  .toggle input { accent-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ziggu Puzzle Simulator <small>Goertz &amp; Williams, FUN 2026</small></h1>
+  <div class="controls">
+    <label>Digits (n): <select id="n-select"></select></label>
+    <button id="reset">Reset to 0…0</button>
+    <button id="undo">Undo</button>
+    <button id="hint-short">Next shortest ▸</button>
+    <button id="hint-long">Next longest ▸</button>
+    <label class="toggle"><input type="checkbox" id="show-short"> show shortest hint</label>
+    <label class="toggle"><input type="checkbox" id="show-long"> show longest hint</label>
+  </div>
+</header>
+
+<main>
+  <section id="state-display-wrap">
+    <div id="state-display"></div>
+    <div class="note" id="encoding-note"></div>
+  </section>
+
+  <section id="mazes"></section>
+
+  <section id="info">
+    <span class="stat">Moves: <strong id="move-count">0</strong></span>
+    <span class="stat">Shortest total: <strong id="short-total">—</strong></span>
+    <span class="stat">Longest total: <strong id="long-total">—</strong></span>
+    <span class="stat" id="solved-stat" style="display:none;">🎉 Solved!</span>
+  </section>
+
+  <section id="state-graph-wrap">
+    <div id="state-graph">
+      <svg id="state-graph-svg"></svg>
+      <div class="note" id="sg-note"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+// ---------- helpers ----------
+const C = (tag, attrs = {}, children = []) => {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  for (const c of children) el.appendChild(c);
+  return el;
+};
+const H = (tag, attrs = {}, children = []) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const c of children) el.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  return el;
+};
+
+// color for maze i (1-indexed)
+const MAZE_COLOR = (i) => `var(--c${(i - 1) % 6})`;
+
+// ---------- puzzle state ----------
+const App = {
+  data: null,          // loaded JSON
+  n: 3,                // current digit count
+  state: "000",        // current state (string of digits, our tuple order: w[0]...w[n-1])
+  history: [],         // stack of previous states
+};
+
+// The tuple index k corresponds to which maze/digit:
+// k = 0        -> r_m (row of maze m)
+// k = n-1      -> c_1 (column of maze 1)
+// 0 < k < n-1  -> r_i AND c_{i+1} where i = n-1-k  (shared)
+// Mazes are indexed 1..m where m = n-1.
+function digitMeaning(k, n) {
+  const m = n - 1;
+  if (k === n - 1) return { label: "c₁", affectsRow: null, affectsCol: 1 };
+  if (k === 0)     return { label: `r_${m}`, affectsRow: m, affectsCol: null };
+  const i = n - 1 - k;
+  return { label: `r_${i}=c_${i + 1}`, affectsRow: i, affectsCol: i + 1 };
+}
+
+// Maze i's (row, col) positions, given state as array of ints (our tuple order).
+function mazePositions(state) {
+  const n = state.length;
+  const m = n - 1;
+  const positions = {}; // maze i -> {r, c}
+  for (let i = 1; i <= m; i++) {
+    const r = state[n - 1 - i];        // r_i = w[n-1-i]
+    const c = (i === 1) ? state[n - 1] // c_1 = w[n-1]
+                        : state[n - i]; // c_i = r_{i-1} = w[n-i]
+    positions[i] = { r, c };
+  }
+  return positions;
+}
+
+// ---------- rendering: one maze ----------
+// Grid: 4x4. Row 0 on top, row 3 on bottom. Col 0 on RIGHT, col 3 on LEFT.
+// cell_size=46, padding=18. SVG viewBox 220x240 (extra room for labels).
+const CELL = 46, PAD = 22;
+function cellXY(r, c) {
+  // returns top-left of the cell in SVG coords
+  return { x: PAD + (3 - c) * CELL, y: PAD + r * CELL };
+}
+function centerXY(r, c) {
+  const { x, y } = cellXY(r, c);
+  return { cx: x + CELL / 2, cy: y + CELL / 2 };
+}
+
+function renderMaze(i, pos, legalTargetsForMaze, onClick, mazeColor) {
+  // legalTargetsForMaze: list of {r, c, digit, delta} (new positions for this maze
+  // reachable by a single legal move from current state).
+  const W = PAD * 2 + CELL * 4;
+  const H_ = PAD * 2 + CELL * 4 + 24; // room for axis labels below
+  const svg = C("svg", {
+    viewBox: `0 0 ${W} ${H_}`,
+    width: W, height: H_,
+    style: "display:block;",
+  });
+
+  // background cells
+  const valid = (r, c) => (r !== 3) || (c === 3);
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) {
+      const { x, y } = cellXY(r, c);
+      svg.appendChild(C("rect", {
+        x, y, width: CELL, height: CELL,
+        class: valid(r, c) ? "cell" : "cell cell-invalid",
+      }));
+    }
+  }
+
+  // S-path corridor as a single polyline through cell centers.
+  const pathCells = [
+    [0,0],[0,1],[0,2],[0,3],
+    [1,3],[1,2],[1,1],[1,0],
+    [2,0],[2,1],[2,2],[2,3],
+    [3,3],
+  ];
+  const points = pathCells.map(([r,c]) => {
+    const { cx, cy } = centerXY(r, c);
+    return `${cx},${cy}`;
+  }).join(" ");
+  svg.appendChild(C("polyline", {
+    points, class: "corridor", stroke: mazeColor,
+  }));
+
+  // Exit marker at (3,3)
+  {
+    const { cx, cy } = centerXY(3, 3);
+    svg.appendChild(C("text", {
+      x: cx, y: cy - CELL / 2 - 3, class: "exit-mark",
+    }, [document.createTextNode("⭐")]));
+  }
+
+  // Row labels on the right (outside grid); Column labels on bottom.
+  for (let r = 0; r < 4; r++) {
+    const { y } = cellXY(r, 0);
+    svg.appendChild(C("text", {
+      x: PAD + CELL * 4 + 5, y: y + CELL / 2 + 4,
+      "font-size": 11, fill: "#888",
+    }, [document.createTextNode(String(r))]));
+  }
+  for (let c = 0; c < 4; c++) {
+    const { x } = cellXY(0, c);
+    svg.appendChild(C("text", {
+      x: x + CELL / 2, y: PAD + CELL * 4 + 14,
+      "font-size": 11, fill: "#888", "text-anchor": "middle",
+    }, [document.createTextNode(String(c))]));
+  }
+
+  // Legal-move targets (clickable light dots)
+  const targetSet = new Set(legalTargetsForMaze.map(t => `${t.r},${t.c}`));
+  for (const t of legalTargetsForMaze) {
+    const { cx, cy } = centerXY(t.r, t.c);
+    const spot = C("circle", {
+      cx, cy, r: 10, class: "spot", fill: mazeColor,
+    });
+    spot.addEventListener("click", () => onClick(t));
+    svg.appendChild(spot);
+  }
+
+  // Current position dot
+  const { cx, cy } = centerXY(pos.r, pos.c);
+  svg.appendChild(C("circle", {
+    cx, cy, r: 13, fill: mazeColor, class: "current",
+  }));
+
+  return svg;
+}
+
+// ---------- main rendering ----------
+function render() {
+  const { data, n, state, history } = App;
+  const info = data.by_n[String(n)];
+  const stateArr = state.split("").map(Number);
+  const positions = mazePositions(stateArr);
+  const legal = (info.neighbors[state] || []).map(({ digit, state: s }) => ({ digit, state: s }));
+
+  // hint digits
+  const hintShort = info.shortest_hint[state]; // {digit, delta} or undefined
+  const hintLong = info.longest_hint[state];
+  const showShort = document.getElementById("show-short").checked;
+  const showLong = document.getElementById("show-long").checked;
+
+  // ----- state display: render the paper encoding c_1 r_1 r_2 ... r_m -----
+  // Paper writes w[n-1] w[n-2] ... w[0] (highest-left convention flipped in ours?)
+  // We store w[0] = r_m (paper's LEFT in "c_1 r_1 r_2 ... r_m"? No: paper writes
+  // c_1 first (leftmost), then r_1, r_2, ..., r_m. Our tuple stores w[0]=r_m first.
+  // So paper string = w[n-1] w[n-2] ... w[1] w[0]  (reverse of our tuple).
+  const display = document.getElementById("state-display");
+  display.innerHTML = "";
+  const paperOrder = []; // list of {ourIdx, digit, meaningLabel, color}
+  for (let paperIdx = 0; paperIdx < n; paperIdx++) {
+    const ourIdx = n - 1 - paperIdx;
+    const m = digitMeaning(ourIdx, n);
+    // color: for c_1, match maze 1. For r_i shared with c_{i+1}, use maze i (row).
+    let mazeForColor;
+    if (m.affectsRow) mazeForColor = m.affectsRow;
+    else mazeForColor = m.affectsCol;
+    const col = MAZE_COLOR(mazeForColor);
+    paperOrder.push({ ourIdx, digit: stateArr[ourIdx], label: m.label, color: col });
+  }
+  paperOrder.forEach(({ ourIdx, digit, label, color }) => {
+    const box = H("div", { class: "digit-box" }, []);
+    box.style.borderColor = color;
+    box.style.color = color;
+    const lbl = H("div", { class: "digit-label" }, [label]);
+    box.appendChild(lbl);
+    box.appendChild(document.createTextNode(String(digit)));
+    if (showShort && hintShort && hintShort.digit === ourIdx) box.classList.add("hint-short");
+    if (showLong && hintLong && hintLong.digit === ourIdx) box.classList.add("hint-long");
+    display.appendChild(box);
+  });
+
+  document.getElementById("encoding-note").textContent =
+    `Encoding c₁ r₁ r₂ … r_${n - 1}  (${n} digits, m = ${n - 1} mazes). Start = ${"0".repeat(n)}, target = ${"3".repeat(n)}.`;
+
+  // ----- mazes -----
+  const mazesEl = document.getElementById("mazes");
+  mazesEl.innerHTML = "";
+  const m = n - 1;
+  for (let i = 1; i <= m; i++) {
+    const pos = positions[i];
+    // Figure legal targets for this maze: filter `legal` down to those whose
+    // changed digit affects this maze.
+    const targets = [];
+    for (const { digit, state: newState } of legal) {
+      const newArr = newState.split("").map(Number);
+      const mm = digitMeaning(digit, n);
+      if (mm.affectsRow === i || mm.affectsCol === i) {
+        const newPos = mazePositions(newArr)[i];
+        targets.push({ r: newPos.r, c: newPos.c, newState, digit });
+      }
+    }
+    const wrap = H("div", { class: "maze-wrap" }, [
+      H("div", { class: "title" }, [`Maze ${i}`]),
+    ]);
+    const svg = renderMaze(i, pos, targets, (t) => applyMove(t.newState, t.digit), MAZE_COLOR(i));
+    wrap.appendChild(svg);
+    wrap.appendChild(H("div", { class: "pos" }, [`(r=${pos.r}, c=${pos.c})`]));
+    mazesEl.appendChild(wrap);
+  }
+
+  // ----- info -----
+  document.getElementById("move-count").textContent = history.length;
+  document.getElementById("short-total").textContent = info.shortest_path.length - 1;
+  document.getElementById("long-total").textContent = info.longest_path.length - 1;
+  document.getElementById("solved-stat").style.display = (state === "3".repeat(n)) ? "" : "none";
+
+  // Buttons enabled only if we have a hint
+  document.getElementById("hint-short").disabled = !hintShort;
+  document.getElementById("hint-long").disabled = !hintLong;
+  document.getElementById("undo").disabled = history.length === 0;
+
+  // ----- state graph (n ≤ 4) -----
+  renderStateGraph(info);
+}
+
+function applyMove(newState, digitIdx) {
+  App.history.push(App.state);
+  App.state = newState;
+  render();
+}
+
+// ---------- state graph (circular layout; decent up to n=4) ----------
+function renderStateGraph(info) {
+  const svg = document.getElementById("state-graph-svg");
+  const note = document.getElementById("sg-note");
+  svg.innerHTML = "";
+  const n = App.n;
+
+  if (n > 4) {
+    svg.setAttribute("viewBox", "0 0 100 40");
+    svg.setAttribute("height", 40);
+    note.textContent = `State graph view is disabled for n=${n} (${info.states.length} states would crowd the canvas).`;
+    return;
+  }
+  note.textContent = "Nodes are valid Ziggu states; edges are legal moves. Purple: shortest path. Pink: longest path.";
+
+  // Positions: V_n order along a circle. Works beautifully for n=2 (path),
+  // and gives a recognizable structure for n=3/4.
+  const states = info.states;
+  const N = states.length;
+  const size = Math.min(640, 120 + N * 8);
+  const cx = size / 2, cy = size / 2, R = size / 2 - 40;
+  svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
+  svg.setAttribute("width", size);
+  svg.setAttribute("height", size);
+
+  const pos = {};
+  states.forEach((s, i) => {
+    const theta = (i / N) * 2 * Math.PI - Math.PI / 2;
+    pos[s] = { x: cx + R * Math.cos(theta), y: cy + R * Math.sin(theta) };
+  });
+
+  // Longest path edges (consecutive states in info.longest_path).
+  const longPath = info.longest_path;
+  const longEdges = new Set();
+  for (let i = 0; i + 1 < longPath.length; i++) {
+    const a = longPath[i], b = longPath[i + 1];
+    longEdges.add(`${a}|${b}`); longEdges.add(`${b}|${a}`);
+  }
+  const shortPath = info.shortest_path;
+  const shortEdges = new Set();
+  for (let i = 0; i + 1 < shortPath.length; i++) {
+    const a = shortPath[i], b = shortPath[i + 1];
+    shortEdges.add(`${a}|${b}`); shortEdges.add(`${b}|${a}`);
+  }
+
+  // Edges: iterate neighbors dict, each undirected edge once.
+  const drawn = new Set();
+  for (const [s, ns] of Object.entries(info.neighbors)) {
+    for (const { state: t } of ns) {
+      const key = [s, t].sort().join("|");
+      if (drawn.has(key)) continue;
+      drawn.add(key);
+      const p1 = pos[s], p2 = pos[t];
+      let cls = "sg-edge";
+      if (longEdges.has(`${s}|${t}`)) cls += " on-long";
+      if (shortEdges.has(`${s}|${t}`)) cls += " on-short";
+      svg.appendChild(C("line", {
+        x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, class: cls,
+      }));
+    }
+  }
+
+  // Nodes
+  const r = n <= 3 ? 10 : 6;
+  for (const s of states) {
+    const { x, y } = pos[s];
+    const isCurrent = (s === App.state);
+    const onShort = (info.shortest_hint[s] !== undefined) || (s === "3".repeat(n));
+    const node = C("circle", {
+      cx: x, cy: y, r,
+      class: "sg-node" + (isCurrent ? " current" : "") + (onShort ? " on-short" : ""),
+    });
+    node.addEventListener("click", () => {
+      if (s !== App.state) { App.history.push(App.state); App.state = s; render(); }
+    });
+    svg.appendChild(node);
+    if (n <= 3) {
+      svg.appendChild(C("text", {
+        x, y: y + r + 10, "text-anchor": "middle", class: "sg-label",
+      }, [document.createTextNode(s)]));
+    }
+  }
+}
+
+// ---------- controls ----------
+function setN(newN) {
+  App.n = newN;
+  App.state = "0".repeat(newN);
+  App.history = [];
+  render();
+}
+
+document.getElementById("reset").addEventListener("click", () => {
+  App.state = "0".repeat(App.n);
+  App.history = [];
+  render();
+});
+document.getElementById("undo").addEventListener("click", () => {
+  if (App.history.length === 0) return;
+  App.state = App.history.pop();
+  render();
+});
+document.getElementById("hint-short").addEventListener("click", () => {
+  const info = App.data.by_n[String(App.n)];
+  const h = info.shortest_hint[App.state];
+  if (!h) return;
+  const arr = App.state.split("").map(Number);
+  arr[h.digit] += h.delta;
+  applyMove(arr.join(""), h.digit);
+});
+document.getElementById("hint-long").addEventListener("click", () => {
+  const info = App.data.by_n[String(App.n)];
+  const h = info.longest_hint[App.state];
+  if (!h) return;
+  const arr = App.state.split("").map(Number);
+  arr[h.digit] += h.delta;
+  applyMove(arr.join(""), h.digit);
+});
+document.getElementById("show-short").addEventListener("change", render);
+document.getElementById("show-long").addEventListener("change", render);
+
+document.getElementById("n-select").addEventListener("change", (e) => {
+  setN(parseInt(e.target.value, 10));
+});
+
+// keyboard: left-arrow undo, S = shortest hint move, L = longest
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "z" && (e.metaKey || e.ctrlKey)) {
+    document.getElementById("undo").click(); e.preventDefault();
+  } else if (e.key === "ArrowLeft") {
+    document.getElementById("undo").click();
+  } else if (e.key === "s") {
+    document.getElementById("hint-short").click();
+  } else if (e.key === "l") {
+    document.getElementById("hint-long").click();
+  } else if (e.key === "r") {
+    document.getElementById("reset").click();
+  }
+});
+
+// ---------- boot ----------
+fetch("puzzle_data.json")
+  .then(r => r.json())
+  .then(data => {
+    App.data = data;
+    const sel = document.getElementById("n-select");
+    for (const k of Object.keys(data.by_n).sort()) {
+      const opt = H("option", { value: k }, [k]);
+      if (parseInt(k, 10) === 3) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    setN(3);
+  })
+  .catch(err => {
+    document.body.innerHTML =
+      `<p style="padding:20px;color:#c00;">Failed to load puzzle_data.json: ${err}. Run <code>python3 scripts/build.py</code> first.</p>`;
+  });
+</script>
+</body>
+</html>
